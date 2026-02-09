@@ -189,6 +189,28 @@ class PaperFetcher:
             logger.error("Failed to fetch via EZproxy: %s", e)
             return paper
 
+        # Check for CAPTCHA/challenge page
+        if self._is_captcha_page(resp.text):
+            logger.warning("CAPTCHA detected, opening browser for manual intervention...")
+            print("\n" + "=" * 60)
+            print("  CAPTCHA detected! Opening browser...")
+            print("  Please complete the verification in the browser window.")
+            print("  The tool will continue automatically after you're done.")
+            print("=" * 60 + "\n")
+            
+            # Open browser for manual CAPTCHA handling
+            if self._handle_captcha_manually(url):
+                # Retry after manual handling
+                try:
+                    resp = self.auth.fetch(url)
+                    resp.raise_for_status()
+                except requests.RequestException as e:
+                    logger.error("Failed after CAPTCHA handling: %s", e)
+                    return paper
+            else:
+                logger.error("Manual CAPTCHA handling failed")
+                return paper
+
         content_type = resp.headers.get("content-type", "").lower()
 
         # If response is PDF
@@ -215,6 +237,14 @@ class PaperFetcher:
             self._rate_limit()
             try:
                 pdf_resp = self.auth.fetch(pdf_url)
+                
+                # Check for CAPTCHA on PDF URL too
+                if self._is_captcha_page(pdf_resp.text):
+                    logger.warning("CAPTCHA on PDF page, opening browser...")
+                    print("\n[CAPTCHA] Please complete verification in browser...")
+                    if self._handle_captcha_manually(pdf_url):
+                        pdf_resp = self.auth.fetch(pdf_url)
+                
                 pdf_resp.raise_for_status()
                 if "pdf" in pdf_resp.headers.get("content-type", "").lower():
                     pdf_bytes = pdf_resp.content
@@ -227,6 +257,117 @@ class PaperFetcher:
                 logger.warning("Failed to download PDF: %s", e)
 
         return paper
+
+    def _is_captcha_page(self, html: str) -> bool:
+        """Check if page is a CAPTCHA/challenge page."""
+        captcha_indicators = [
+            "captcha",
+            "recaptcha",
+            "g-recaptcha",
+            "h-captcha",
+            "cf-challenge",
+            "cloudflare",
+            "challenge-platform",
+            "verify you are human",
+            "access denied",
+            "blocked",
+            "ray id",
+        ]
+        html_lower = html.lower()
+        return any(indicator in html_lower for indicator in captcha_indicators)
+
+    def _handle_captcha_manually(self, url: str) -> bool:
+        """Open browser for manual CAPTCHA handling."""
+        import time
+        from selenium import webdriver
+        from selenium.webdriver.edge.options import Options as EdgeOptions
+        from selenium.webdriver.edge.service import Service as EdgeService
+        from pathlib import Path
+
+        edge_paths = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        ]
+        
+        edge_binary = None
+        for path in edge_paths:
+            if Path(path).exists():
+                edge_binary = path
+                break
+        
+        if not edge_binary:
+            logger.error("Edge browser not found")
+            return False
+
+        options = EdgeOptions()
+        options.binary_location = edge_binary
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+
+        driver = None
+        try:
+            driver_path = r"D:\programs\edgedriver_win64\msedgedriver.exe"
+            if Path(driver_path).exists():
+                service = EdgeService(driver_path)
+            else:
+                service = EdgeService()
+            
+            driver = webdriver.Edge(service=service, options=options)
+            driver.get(url)
+
+            # Wait for user to complete CAPTCHA (up to 2 minutes)
+            max_wait = 120
+            poll_interval = 2
+            elapsed = 0
+
+            while elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+                try:
+                    current_url = driver.current_url
+                    page_source = driver.page_source.lower()
+
+                    # Check if CAPTCHA is gone and we're on the actual page
+                    if not self._is_captcha_page(page_source):
+                        # Also check if we have actual content (not just a loading page)
+                        if len(driver.page_source) > 5000:
+                            logger.info("CAPTCHA completed! Saving session...")
+                            
+                            # Save cookies from browser to session
+                            for cookie in driver.get_cookies():
+                                self.auth.session.cookies.set(
+                                    cookie["name"],
+                                    cookie["value"],
+                                    domain=cookie.get("domain", ""),
+                                    path=cookie.get("path", "/"),
+                                )
+                            
+                            # Save cookies to file
+                            cookie_path = Path(self.config.cookie_path)
+                            cookie_path.write_text(
+                                json.dumps(driver.get_cookies(), indent=2),
+                                encoding="utf-8"
+                            )
+                            
+                            print("\n  CAPTCHA completed! Continuing...\n")
+                            return True
+
+                except Exception:
+                    pass
+
+            print("\n  Timeout waiting for CAPTCHA completion.\n")
+            return False
+
+        except Exception as e:
+            logger.error("Failed to open browser for CAPTCHA: %s", e)
+            return False
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
 
     def _apply_extracted(self, paper: Paper, extracted: dict):
         """Apply extracted content to a Paper object."""
