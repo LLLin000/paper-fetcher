@@ -51,8 +51,8 @@ class PaperFetcher:
         doi = self._parse_doi(identifier)
         url = self._parse_url(identifier)
 
-        # Check cache
-        if use_cache and doi:
+        # Check cache (skip if input was PMID - always resolve fresh)
+        if use_cache and doi and not re.match(r"^\d{7,8}$", identifier.strip()):
             cached = self._load_cache(doi)
             if cached:
                 logger.info("Loaded from cache: %s", doi)
@@ -318,8 +318,21 @@ class PaperFetcher:
 
     def _resolve_doi(self, doi: str) -> str | None:
         """Resolve a DOI to its target URL (publisher website)."""
+        # Direct publisher URL construction for common prefixes
+        # This avoids redirects to PubMed for non-OA articles
+        if doi.startswith("10.1016/"):
+            # Elsevier ScienceDirect
+            article_id = doi.split("/")[-1].upper()
+            return f"https://www.sciencedirect.com/science/article/pii/{article_id}"
+        elif doi.startswith("10.1002/"):
+            # Wiley
+            return f"https://doi.org/{doi}"
+        elif doi.startswith("10.1038/"):
+            # Nature
+            return f"https://doi.org/{doi}"
+        
+        # Fall back to doi.org resolution
         try:
-            # Use GET instead of HEAD for better compatibility
             resp = requests.get(
                 f"https://doi.org/{doi}",
                 allow_redirects=True,
@@ -328,14 +341,8 @@ class PaperFetcher:
             )
             if resp.status_code == 200:
                 final_url = resp.url
-                # Don't return PubMed URLs for non-OA articles
-                # We need the actual publisher URL for WebVPN
+                # Don't use PubMed URLs for WebVPN
                 if "pubmed.ncbi.nlm.nih.gov" in final_url:
-                    # Try to construct publisher URL from DOI
-                    # 10.1016/j.pmr.2022.12.003 -> Elsevier
-                    if doi.startswith("10.1016/"):
-                        return f"https://www.sciencedirect.com/science/article/pii/{doi.split('/')[-1].upper()}"
-                    # Add more publishers as needed
                     logger.warning("DOI resolved to PubMed, but article is not OA. Cannot fetch via WebVPN.")
                     return None
                 return final_url
