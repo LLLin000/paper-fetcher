@@ -157,7 +157,31 @@ class ProxyAuth:
                 options.add_argument("--remote-allow-origins=*")
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
-                service = EdgeService(EdgeChromiumDriverManager().install())
+                # Check for existing Edge driver in PATH or common locations
+                driver_paths = [
+                    "msedgedriver",
+                    r"C:\Windows\System32\msedgedriver.exe",
+                    r"C:\Windows\msedgedriver.exe",
+                ]
+                
+                driver_path = None
+                for path in driver_paths:
+                    try:
+                        import subprocess
+                        result = subprocess.run([path, "--version"], capture_output=True, timeout=5)
+                        if result.returncode == 0:
+                            driver_path = path
+                            logger.info(f"Found Edge driver: {path}")
+                            break
+                    except:
+                        continue
+                
+                if driver_path and driver_path != "msedgedriver":
+                    service = EdgeService(driver_path)
+                else:
+                    # Try to use driver from PATH or let Selenium find it
+                    service = EdgeService()
+                
                 self._driver = webdriver.Edge(service=service, options=options)
                 logger.info("Edge browser started successfully")
             except Exception as edge_error:
