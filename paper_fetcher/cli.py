@@ -20,6 +20,7 @@ from rich.table import Table
 
 from .config import Config
 from .fetcher import PaperFetcher
+from .history import SearchHistory
 from .sources import semantic_scholar
 from .sources.pubmed_search import search as pubmed_search
 
@@ -29,6 +30,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+history = SearchHistory()
 
 
 def _setup_logging(verbose: bool = False):
@@ -220,6 +222,9 @@ def search(
         results = pubmed_search(query, limit=limit, date_from=f"{year_from}/01/01" if year_from else None, 
                                 date_to=f"{year_to}/12/31" if year_to else None)
         
+        # Record search history
+        history.add(query, "pubmed", len(results))
+
         if not results:
             console.print("[yellow]No results found.[/yellow]")
             raise typer.Exit(0)
@@ -263,6 +268,8 @@ def search(
                     fetcher.close()
     else:
         results = semantic_scholar.search(query, limit=limit, year_range=year or None)
+
+        history.add(query, "semantic_scholar", len(results))
 
         if not results:
             console.print("[yellow]No results found.[/yellow]")
@@ -309,6 +316,61 @@ def search(
                             console.print(f"    [red]Error: {e}[/red]")
                 finally:
                     fetcher.close()
+
+
+@app.command()
+def history_cmd(
+    action: str = typer.Argument("show", help="Action: show, clear, search."),
+    keyword: str = typer.Option("", "--keyword", "-k", help="Search keyword (for 'search' action)."),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of records to show."),
+):
+    """View or manage search history."""
+    if action == "show":
+        records = history.get_recent(limit)
+        if not records:
+            console.print("[yellow]No search history.[/yellow]")
+            return
+        
+        table = Table(title=f"Search History (last {len(records)})")
+        table.add_column("Time", width=20)
+        table.add_column("Source", width=15)
+        table.add_column("Query", max_width=50)
+        table.add_column("Results", width=8, justify="right")
+        
+        for r in records:
+            time_str = r.timestamp[:19].replace("T", " ")
+            table.add_row(time_str, r.source, r.query, str(r.result_count))
+        
+        console.print(table)
+    
+    elif action == "clear":
+        history.clear()
+        console.print("[green]History cleared.[/green]")
+    
+    elif action == "search":
+        if not keyword:
+            console.print("[red]Please provide --keyword for search.[/red]")
+            raise typer.Exit(1)
+        
+        records = history.search(keyword)
+        if not records:
+            console.print(f"[yellow]No results for '{keyword}'.[/yellow]")
+            return
+        
+        table = Table(title=f"History Search: '{keyword}' ({len(records)})")
+        table.add_column("Time", width=20)
+        table.add_column("Source", width=15)
+        table.add_column("Query", max_width=50)
+        
+        for r in records[:limit]:
+            time_str = r.timestamp[:19].replace("T", " ")
+            table.add_row(time_str, r.source, r.query)
+        
+        console.print(table)
+    
+    else:
+        console.print(f"[red]Unknown action: {action}. Use 'show', 'clear', or 'search'.[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()
