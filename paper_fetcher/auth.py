@@ -8,9 +8,12 @@ from urllib.parse import urlparse
 
 import requests
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service as EdgeService
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
 from .config import Config
 
@@ -111,19 +114,45 @@ class ProxyAuth:
         return False
 
     def _browser_login(self) -> bool:
-        """Open Chrome for manual login."""
-        options = Options()
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--remote-allow-origins=*")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        """Open browser for manual login. Tries Chrome first, then Edge."""
+        browser_type = "chrome"
 
         try:
-            service = Service(ChromeDriverManager().install())
+            # Try Chrome first
+            options = ChromeOptions()
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
+            options.add_argument("--remote-allow-origins=*")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+
+            service = ChromeService(ChromeDriverManager().install())
             self._driver = webdriver.Chrome(service=service, options=options)
-        except Exception as e:
-            logger.error("Failed to start Chrome: %s", e)
-            return False
+            logger.info("Chrome browser started successfully")
+        except Exception as chrome_error:
+            logger.warning("Failed to start Chrome: %s", chrome_error)
+            logger.info("Trying Edge browser...")
+
+            try:
+                # Fallback to Edge
+                browser_type = "edge"
+                options = EdgeOptions()
+                options.add_argument("--no-first-run")
+                options.add_argument("--no-default-browser-check")
+                options.add_argument("--remote-allow-origins=*")
+                options.add_experimental_option("excludeSwitches", ["enable-automation"])
+
+                service = EdgeService(EdgeChromiumDriverManager().install())
+                self._driver = webdriver.Edge(service=service, options=options)
+                logger.info("Edge browser started successfully")
+            except Exception as edge_error:
+                logger.error("Failed to start both Chrome and Edge")
+                logger.error("Chrome error: %s", chrome_error)
+                logger.error("Edge error: %s", edge_error)
+                print("\n[ERROR] Could not start browser!")
+                print("Please install Chrome or Edge browser:")
+                print("  Chrome: https://www.google.com/chrome/")
+                print("  Edge: Already installed on Windows 10/11")
+                return False
 
         # Navigate to proxy login
         login_url = self.get_proxied_url(TEST_URL)
