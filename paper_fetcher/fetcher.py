@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .auth import EZProxyAuth
+from .auth import ProxyAuth
 from .config import Config
 from .extractors import html_extractor, pdf_extractor
 from .models import Paper
@@ -20,7 +20,6 @@ from .sources import arxiv, unpaywall
 logger = logging.getLogger(__name__)
 
 DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
-EZPROXY_DOMAIN = "eproxy.lib.hku.hk"
 
 
 class PaperFetcher:
@@ -29,13 +28,13 @@ class PaperFetcher:
     def __init__(self, config: Config | None = None):
         self.config = config or Config.load()
         self.config.ensure_dirs()
-        self._auth: EZProxyAuth | None = None
+        self._auth: ProxyAuth | None = None
         self._last_request_time = 0.0
 
     @property
-    def auth(self) -> EZProxyAuth:
+    def auth(self) -> ProxyAuth:
         if self._auth is None:
-            self._auth = EZProxyAuth(self.config)
+            self._auth = ProxyAuth(self.config)
         return self._auth
 
     def fetch(self, identifier: str, use_cache: bool = True) -> Paper:

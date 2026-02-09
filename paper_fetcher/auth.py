@@ -1,9 +1,10 @@
-"""EZproxy authentication management using Selenium."""
+"""Proxy authentication management for various university VPN systems."""
 
 import json
 import logging
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from selenium import webdriver
@@ -15,23 +16,34 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-# URL used to test if EZproxy session is valid
 TEST_URL = "https://www.nature.com"
-EZPROXY_DOMAIN = "eproxy.lib.hku.hk"
 
 
-class EZProxyAuth:
-    """Manages EZproxy authentication via Selenium and cookie persistence."""
+class ProxyAuth:
+    """Manages university proxy/VPN authentication."""
 
     def __init__(self, config: Config | None = None):
         self.config = config or Config()
         self.config.ensure_dirs()
         self._session: requests.Session | None = None
         self._driver: webdriver.Chrome | None = None
+        self._proxy_type = self._detect_proxy_type()
+
+    def _detect_proxy_type(self) -> str:
+        """Detect proxy type from URL pattern."""
+        proxy_base = self.config.proxy_base.lower()
+
+        if "webvpn" in proxy_base:
+            return "webvpn"
+        elif "ezproxy" in proxy_base or "eproxy" in proxy_base:
+            return "ezproxy"
+        elif "vpn" in proxy_base:
+            return "vpn"
+        else:
+            return "generic"
 
     @property
     def session(self) -> requests.Session:
-        """Get an authenticated requests session."""
         if self._session is None:
             self._session = requests.Session()
             self._session.headers.update({
@@ -44,17 +56,11 @@ class EZProxyAuth:
         return self._session
 
     def login(self, force: bool = False) -> bool:
-        """Ensure we have a valid EZproxy session.
+        """Ensure we have a valid proxy session."""
+        if not self.config.proxy_base:
+            logger.info("No proxy configured - skipping authentication.")
+            return False
 
-        If cookies exist and are valid, reuses them.
-        Otherwise opens a browser for manual login.
-
-        Args:
-            force: If True, ignore saved cookies and force re-login.
-
-        Returns:
-            True if authentication succeeded.
-        """
         if not force and self._try_load_cookies():
             logger.info("Loaded saved cookies - session is valid.")
             return True
@@ -74,7 +80,6 @@ class EZProxyAuth:
             logger.warning("Failed to read cookies: %s", e)
             return False
 
-        # Load cookies into session
         for cookie in cookies:
             self.session.cookies.set(
                 cookie["name"],
@@ -83,29 +88,31 @@ class EZProxyAuth:
                 path=cookie.get("path", "/"),
             )
 
-        # Validate by making a test request
         return self._validate_session()
 
     def _validate_session(self) -> bool:
         """Check if the current session can access proxied content."""
-        proxy_url = self.config.proxy_base + TEST_URL
         try:
+            proxy_url = self.get_proxied_url(TEST_URL)
             resp = self.session.get(proxy_url, timeout=15, allow_redirects=True)
-            # If we end up on the login page, session is invalid
-            if "login" in resp.url.lower() and EZPROXY_DOMAIN in resp.url:
-                logger.info("Session expired - cookies are no longer valid.")
+
+            # Check if we're redirected to login
+            if "login" in resp.url.lower():
+                logger.info("Session expired - redirected to login.")
                 return False
-            # Check if we got proxied content (domain rewritten)
-            if EZPROXY_DOMAIN in resp.url or resp.status_code == 200:
+
+            # Check for successful proxy access
+            if resp.status_code == 200:
                 return True
+
         except requests.RequestException as e:
             logger.warning("Session validation failed: %s", e)
+
         return False
 
     def _browser_login(self) -> bool:
-        """Open Chrome for manual EZproxy login."""
+        """Open Chrome for manual login."""
         options = Options()
-        # Don't use --user-data-dir to avoid conflicts with running Chrome
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
         options.add_argument("--remote-allow-origins=*")
@@ -116,23 +123,18 @@ class EZProxyAuth:
             self._driver = webdriver.Chrome(service=service, options=options)
         except Exception as e:
             logger.error("Failed to start Chrome: %s", e)
-            logger.error(
-                "Make sure Chrome is installed and no other ChromeDriver "
-                "instances are running. ChromeDriver is downloaded automatically."
-            )
             return False
 
-        # Navigate to EZproxy login
-        login_url = self.config.proxy_base + TEST_URL
+        # Navigate to proxy login
+        login_url = self.get_proxied_url(TEST_URL)
         self._driver.get(login_url)
 
         print("\n" + "=" * 60)
-        print("  Please log in to HKU EZproxy in the browser window.")
+        print(f"  Please log in to your university {self._proxy_type.upper()}")
         print("  The tool will detect when login is complete.")
         print("=" * 60 + "\n")
 
-        # Poll until login succeeds
-        max_wait = 600  # 10 minutes
+        max_wait = 600
         poll_interval = 3
         elapsed = 0
         last_url = ""
@@ -144,39 +146,19 @@ class EZProxyAuth:
             try:
                 current_url = self._driver.current_url
 
-                # Log URL changes so user can debug
                 if current_url != last_url:
                     logger.info("Browser URL: %s", current_url)
                     last_url = current_url
 
-                # Detection: URL contains eproxy domain and is not a login page
-                if EZPROXY_DOMAIN in current_url and "login" not in current_url.lower():
+                # Detect successful login
+                if self._is_login_successful(current_url):
                     logger.info("Login detected! URL: %s", current_url)
                     self._save_browser_cookies()
                     print("\n  Login successful! Cookies saved.\n")
                     self._close_browser()
                     return True
 
-                # Detection: URL was rewritten (e.g. www-nature-com.eproxy...)
-                if ".eproxy.lib.hku.hk" in current_url:
-                    logger.info("Login detected via rewritten URL: %s", current_url)
-                    self._save_browser_cookies()
-                    print("\n  Login successful! Cookies saved.\n")
-                    self._close_browser()
-                    return True
-
-                # Detection: check cookies for EZproxy session cookie
-                cookies = self._driver.get_cookies()
-                ez_cookies = [c for c in cookies if "ezproxy" in c.get("domain", "").lower()]
-                if ez_cookies:
-                    logger.info("Login detected via EZproxy cookies.")
-                    self._save_browser_cookies()
-                    print("\n  Login successful! Cookies saved.\n")
-                    self._close_browser()
-                    return True
-
             except Exception:
-                # Browser might have been closed by user
                 logger.warning("Browser connection lost.")
                 self._driver = None
                 return False
@@ -185,8 +167,23 @@ class EZProxyAuth:
         self._close_browser()
         return False
 
+    def _is_login_successful(self, url: str) -> bool:
+        """Check if URL indicates successful login."""
+        url_lower = url.lower()
+
+        # WebVPN: URL contains webvpn domain and not login
+        if self._proxy_type == "webvpn":
+            return "webvpn" in url_lower and "login" not in url_lower
+
+        # EZproxy: URL contains eproxy/ezproxy domain
+        if self._proxy_type == "ezproxy":
+            return ("eproxy" in url_lower or "ezproxy" in url_lower) and "login" not in url_lower
+
+        # Generic: not on login page
+        return "login" not in url_lower
+
     def _save_browser_cookies(self):
-        """Save cookies from Selenium browser to file and load into requests session."""
+        """Save cookies from Selenium browser to file."""
         if not self._driver:
             return
 
@@ -197,7 +194,6 @@ class EZProxyAuth:
         )
         logger.info("Saved %d cookies to %s", len(cookies), cookie_path)
 
-        # Also load into requests session
         for cookie in cookies:
             self.session.cookies.set(
                 cookie["name"],
@@ -216,16 +212,23 @@ class EZProxyAuth:
             self._driver = None
 
     def get_proxied_url(self, url: str) -> str:
-        """Convert a regular URL to an EZproxy URL."""
-        if EZPROXY_DOMAIN in url:
-            return url  # Already proxied
-        return self.config.proxy_base + url
+        """Convert a regular URL to a proxied URL."""
+        if not self.config.proxy_base:
+            return url
+
+        # Already proxied
+        if self._proxy_type in url.lower():
+            return url
+
+        # WebVPN format: https://webvpn.xxx.edu.cn/https://target.url
+        if self._proxy_type == "webvpn":
+            return f"{self.config.proxy_base.rstrip('/')}/{url}"
+
+        # EZproxy format: http://proxy.edu/login?url=https://target.url
+        return f"{self.config.proxy_base}{url}"
 
     def fetch(self, url: str, **kwargs) -> requests.Response:
-        """Fetch a URL through the authenticated session.
-
-        Automatically converts to EZproxy URL if needed.
-        """
+        """Fetch a URL through the authenticated session."""
         proxied = self.get_proxied_url(url)
         kwargs.setdefault("timeout", 30)
         kwargs.setdefault("allow_redirects", True)

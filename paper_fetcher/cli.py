@@ -24,7 +24,7 @@ from .sources import semantic_scholar
 
 app = typer.Typer(
     name="paper-fetcher",
-    help="Fetch academic papers via HKU EZproxy, Open Access, or arXiv.",
+    help="Fetch academic papers via Open Access, university proxy, or arXiv.",
     no_args_is_help=True,
 )
 console = Console()
@@ -54,16 +54,21 @@ def login(
     force: bool = typer.Option(False, "--force", "-f", help="Force re-login even if session is valid."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
-    """Initialize or refresh EZproxy session."""
+    """Initialize or refresh university proxy session."""
     _setup_logging(verbose)
     config = Config.load()
     fetcher = PaperFetcher(config)
 
-    console.print("[bold]Checking EZproxy session...[/bold]")
+    if not config.proxy_base:
+        console.print("[red]No proxy configured. Set it with:[/red]")
+        console.print("  paper-fetcher config-cmd --proxy https://webvpn.your-university.edu.cn/")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Checking {fetcher.auth._proxy_type.upper()} session...[/bold]")
     if fetcher.auth.login(force=force):
-        console.print("[green]EZproxy session is active.[/green]")
+        console.print("[green]Proxy session is active.[/green]")
     else:
-        console.print("[red]Failed to authenticate with EZproxy.[/red]")
+        console.print("[red]Failed to authenticate with proxy.[/red]")
         raise typer.Exit(1)
 
 
@@ -260,6 +265,7 @@ def config_cmd(
     show: bool = typer.Option(True, "--show", help="Show current config."),
     set_email: str = typer.Option("", "--email", help="Set email for Unpaywall API."),
     set_output: str = typer.Option("", "--output-dir", help="Set default output directory."),
+    set_proxy: str = typer.Option("", "--proxy", help="Set university proxy URL (e.g., https://webvpn.sdu.edu.cn/)."),
 ):
     """View or update configuration."""
     cfg = Config.load()
@@ -274,13 +280,22 @@ def config_cmd(
         cfg.save()
         console.print(f"[green]Output dir set to: {set_output}[/green]")
 
-    if show and not set_email and not set_output:
+    if set_proxy:
+        cfg.proxy_base = set_proxy
+        cfg.save()
+        console.print(f"[green]Proxy set to: {set_proxy}[/green]")
+
+    if show and not set_email and not set_output and not set_proxy:
         console.print("[bold]Current configuration:[/bold]")
-        console.print(f"  Proxy base:  {cfg.proxy_base}")
+        console.print(f"  Proxy base:  {cfg.proxy_base or '(not set)'}")
         console.print(f"  Email:       {cfg.email}")
         console.print(f"  Output dir:  {cfg.output_dir}")
         console.print(f"  Cache dir:   {cfg.cache_dir}")
         console.print(f"  Cookie path: {cfg.cookie_path}")
+        
+        if not cfg.proxy_base:
+            console.print("\n[yellow]Note: No proxy configured. Set your university proxy to access paywalled papers.[/yellow]")
+            console.print("  Example: paper-fetcher config-cmd --proxy https://webvpn.sdu.edu.cn/")
 
 
 if __name__ == "__main__":
