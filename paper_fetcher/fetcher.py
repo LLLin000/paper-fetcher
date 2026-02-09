@@ -16,6 +16,7 @@ from .config import Config
 from .extractors import html_extractor, pdf_extractor
 from .models import Paper
 from .sources import arxiv, unpaywall
+from .sources.pubmed import pmid_to_doi
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,7 @@ class PaperFetcher:
         return base + "/" + href
 
     def _parse_doi(self, identifier: str) -> str | None:
-        """Extract DOI from identifier."""
+        """Extract DOI from identifier (handles DOI, PMID, PMCID)."""
         identifier = identifier.strip()
 
         # Direct DOI
@@ -281,6 +282,24 @@ class PaperFetcher:
         if doi_match:
             return doi_match.group(1)
 
+        # Check for PMID (numeric 7-8 digits)
+        if re.match(r"^\d{7,8}$", identifier):
+            logger.info("Detected PMID: %s, converting to DOI...", identifier)
+            doi = pmid_to_doi(identifier, email=self.config.email)
+            if doi:
+                logger.info("PMID %s -> DOI %s", identifier, doi)
+                return doi
+            else:
+                logger.warning("Could not convert PMID %s to DOI", identifier)
+
+        # Check for PMCID
+        pmc_match = re.match(r"^PMC(\d+)$", identifier, re.IGNORECASE)
+        if pmc_match:
+            logger.info("Detected PMCID: %s", identifier)
+            # For PMCID, we need special handling
+            # Return a special marker that will be handled separately
+            return None
+
         return None
 
     def _parse_url(self, identifier: str) -> str | None:
@@ -290,6 +309,11 @@ class PaperFetcher:
             return identifier
         if DOI_PATTERN.match(identifier):
             return None  # Pure DOI, not a URL
+        
+        # Check for PMID - generate PubMed URL
+        if re.match(r"^\d{7,8}$", identifier):
+            return f"https://pubmed.ncbi.nlm.nih.gov/{identifier}/"
+        
         return None
 
     def _resolve_doi(self, doi: str) -> str | None:
