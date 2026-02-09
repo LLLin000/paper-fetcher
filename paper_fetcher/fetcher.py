@@ -310,23 +310,35 @@ class PaperFetcher:
         if DOI_PATTERN.match(identifier):
             return None  # Pure DOI, not a URL
         
-        # Check for PMID - generate PubMed URL
+        # Check for PMID - we will resolve via DOI later, not direct PubMed URL
         if re.match(r"^\d{7,8}$", identifier):
-            return f"https://pubmed.ncbi.nlm.nih.gov/{identifier}/"
+            return None  # Will be handled via DOI resolution
         
         return None
 
     def _resolve_doi(self, doi: str) -> str | None:
-        """Resolve a DOI to its target URL."""
+        """Resolve a DOI to its target URL (publisher website)."""
         try:
-            resp = requests.head(
+            # Use GET instead of HEAD for better compatibility
+            resp = requests.get(
                 f"https://doi.org/{doi}",
                 allow_redirects=True,
                 timeout=10,
-                headers={"User-Agent": "paper-fetcher/0.1"},
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             )
             if resp.status_code == 200:
-                return resp.url
+                final_url = resp.url
+                # Don't return PubMed URLs for non-OA articles
+                # We need the actual publisher URL for WebVPN
+                if "pubmed.ncbi.nlm.nih.gov" in final_url:
+                    # Try to construct publisher URL from DOI
+                    # 10.1016/j.pmr.2022.12.003 -> Elsevier
+                    if doi.startswith("10.1016/"):
+                        return f"https://www.sciencedirect.com/science/article/pii/{doi.split('/')[-1].upper()}"
+                    # Add more publishers as needed
+                    logger.warning("DOI resolved to PubMed, but article is not OA. Cannot fetch via WebVPN.")
+                    return None
+                return final_url
         except requests.RequestException as e:
             logger.warning("Failed to resolve DOI %s: %s", doi, e)
         return None
