@@ -1,0 +1,16 @@
+# Example identifiers file for batch download
+# Lines starting with # are comments
+# Supports both DOI and PMID
+
+# PubMed IDs (medical literature)
+37003657
+38123456
+41654144
+
+# DOIs (general format)
+10.1038/s41586-024-12345-6
+10.1016/j.cell.2023.03.004
+
+# Mixed format - both work!
+# PMID: 37003657
+# DOI: 10.1038/s41586-024-12345-6
