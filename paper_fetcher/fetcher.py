@@ -17,6 +17,7 @@ from .extractors import html_extractor, pdf_extractor
 from .models import Paper
 from .sources import arxiv, unpaywall
 from .sources.pubmed import pmid_to_doi
+from .sources.doi_resolver import resolve_doi_to_url
 
 logger = logging.getLogger(__name__)
 
@@ -318,37 +319,7 @@ class PaperFetcher:
 
     def _resolve_doi(self, doi: str) -> str | None:
         """Resolve a DOI to its target URL (publisher website)."""
-        # Direct publisher URL construction for common prefixes
-        # This avoids redirects to PubMed for non-OA articles
-        if doi.startswith("10.1016/"):
-            # Elsevier ScienceDirect
-            article_id = doi.split("/")[-1].upper()
-            return f"https://www.sciencedirect.com/science/article/pii/{article_id}"
-        elif doi.startswith("10.1002/"):
-            # Wiley
-            return f"https://doi.org/{doi}"
-        elif doi.startswith("10.1038/"):
-            # Nature
-            return f"https://doi.org/{doi}"
-        
-        # Fall back to doi.org resolution
-        try:
-            resp = requests.get(
-                f"https://doi.org/{doi}",
-                allow_redirects=True,
-                timeout=10,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            if resp.status_code == 200:
-                final_url = resp.url
-                # Don't use PubMed URLs for WebVPN
-                if "pubmed.ncbi.nlm.nih.gov" in final_url:
-                    logger.warning("DOI resolved to PubMed, but article is not OA. Cannot fetch via WebVPN.")
-                    return None
-                return final_url
-        except requests.RequestException as e:
-            logger.warning("Failed to resolve DOI %s: %s", doi, e)
-        return None
+        return resolve_doi_to_url(doi)
 
     def _rate_limit(self):
         """Apply rate limiting between requests."""
