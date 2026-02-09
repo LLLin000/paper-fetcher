@@ -21,6 +21,7 @@ from rich.table import Table
 from .config import Config
 from .fetcher import PaperFetcher
 from .sources import semantic_scholar
+from .sources.pubmed_search import search as pubmed_search
 
 app = typer.Typer(
     name="paper-fetcher",
@@ -115,29 +116,29 @@ def fetch(
 
 @app.command()
 def batch(
-    file: Path = typer.Argument(help="File containing DOIs (one per line)."),
+    file: Path = typer.Argument(help="File containing DOIs or PMIDs (one per line)."),
     output: str = typer.Option("", "--output", "-o", help="Output directory."),
     format: str = typer.Option("json", "--format", "-f", help="Output format: json, markdown, text."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
-    """Fetch multiple papers from a file of DOIs."""
+    """Fetch multiple papers from a file of identifiers (DOI or PMID)."""
     _setup_logging(verbose)
 
     if not file.exists():
         console.print(f"[red]File not found: {file}[/red]")
         raise typer.Exit(1)
 
-    dois = [
+    identifiers = [
         line.strip()
         for line in file.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
 
-    if not dois:
-        console.print("[yellow]No DOIs found in file.[/yellow]")
+    if not identifiers:
+        console.print("[yellow]No identifiers found in file.[/yellow]")
         raise typer.Exit(0)
 
-    console.print(f"[bold]Found {len(dois)} DOIs to fetch.[/bold]")
+    console.print(f"[bold]Found {len(identifiers)} identifiers to fetch.[/bold]")
 
     config = Config.load()
     if output:
@@ -149,16 +150,21 @@ def batch(
 
     succeeded = 0
     failed = 0
+    no_full_text = 0
 
     try:
-        for i, doi in enumerate(dois, 1):
-            console.print(f"\n[bold][{i}/{len(dois)}][/bold] Fetching: {doi}")
+        for i, identifier in enumerate(identifiers, 1):
+            console.print(f"\n[bold][{i}/{len(identifiers)}][/bold] Fetching: {identifier}")
             try:
-                paper = fetcher.fetch(doi)
+                paper = fetcher.fetch(identifier)
                 if paper.full_text:
                     succeeded += 1
-                    # Save result
-                    safe_name = doi.replace("/", "_").replace(":", "_")
+                    # Determine safe filename
+                    if identifier.startswith("10."):
+                        safe_name = identifier.replace("/", "_").replace(":", "_")
+                    else:
+                        safe_name = f"PMID_{identifier}"
+                    
                     if format == "markdown":
                         out_file = results_dir / f"{safe_name}.md"
                         out_file.write_text(paper.to_markdown(), encoding="utf-8")
@@ -169,14 +175,17 @@ def batch(
                         out_file = results_dir / f"{safe_name}.json"
                         out_file.write_text(paper.to_json(), encoding="utf-8")
                     console.print(f"  [green]OK[/green] → {out_file.name}")
+                elif paper.abstract:
+                    no_full_text += 1
+                    console.print("  [yellow]Abstract only (no full text)[/yellow]")
                 else:
                     failed += 1
-                    console.print("  [yellow]No full text extracted[/yellow]")
+                    console.print("  [red]No content extracted[/red]")
             except Exception as e:
                 failed += 1
                 console.print(f"  [red]Error: {e}[/red]")
 
-        console.print(f"\n[bold]Done:[/bold] {succeeded} succeeded, {failed} failed out of {len(dois)}.")
+        console.print(f"\n[bold]Done:[/bold] {succeeded} succeeded, {no_full_text} abstract only, {failed} failed out of {len(identifiers)}.")
 
     finally:
         fetcher.close()
@@ -187,62 +196,119 @@ def search(
     query: str = typer.Argument(help="Search query."),
     limit: int = typer.Option(10, "--limit", "-n", help="Maximum results."),
     year: str = typer.Option("", "--year", "-y", help="Year range, e.g., '2020-2024' or '2020-'."),
+    source: str = typer.Option("semantic_scholar", "--source", "-s", help="Source: semantic_scholar, pubmed."),
     do_fetch: bool = typer.Option(False, "--fetch", help="Also fetch full text for results with DOIs."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
-    """Search for papers via Semantic Scholar."""
+    """Search for papers via Semantic Scholar or PubMed."""
     _setup_logging(verbose)
 
-    console.print(f"[bold]Searching:[/bold] {query}")
-    results = semantic_scholar.search(query, limit=limit, year_range=year or None)
+    console.print(f"[bold]Searching {source}:[/bold] {query}")
+    
+    if source == "pubmed":
+        # Parse year range for PubMed
+        year_from = None
+        year_to = None
+        if year:
+            if "-" in year:
+                parts = year.split("-")
+                year_from = int(parts[0]) if parts[0] else None
+                year_to = int(parts[1]) if parts[1] else None
+            else:
+                year_from = int(year)
+        
+        results = pubmed_search(query, limit=limit, date_from=f"{year_from}/01/01" if year_from else None, 
+                                date_to=f"{year_to}/12/31" if year_to else None)
+        
+        if not results:
+            console.print("[yellow]No results found.[/yellow]")
+            raise typer.Exit(0)
+        
+        table = Table(title=f"PubMed Search Results ({len(results)})")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Year", width=5)
+        table.add_column("Title", max_width=60)
+        table.add_column("Journal", max_width=25)
+        table.add_column("PMID", width=10)
+        
+        for i, r in enumerate(results, 1):
+            pub_year = r.pub_date.split("-")[0] if r.pub_date else ""
+            table.add_row(
+                str(i),
+                pub_year,
+                r.title[:60] if r.title else "",
+                r.journal[:25] if r.journal else "",
+                r.pmid,
+            )
+        
+        console.print(table)
+        
+        # Optionally fetch full texts
+        if do_fetch:
+            fetchable = [r for r in results if r.pmid]
+            if fetchable:
+                console.print(f"\n[bold]Fetching {len(fetchable)} papers...[/bold]")
+                config = Config.load()
+                fetcher = PaperFetcher(config)
+                try:
+                    for r in fetchable:
+                        console.print(f"  Fetching PMID: {r.pmid}")
+                        try:
+                            paper = fetcher.fetch(r.pmid)
+                            status = "[green]OK[/green]" if paper.full_text else "[yellow]No text[/yellow]"
+                            console.print(f"    {status}")
+                        except Exception as e:
+                            console.print(f"    [red]Error: {e}[/red]")
+                finally:
+                    fetcher.close()
+    else:
+        results = semantic_scholar.search(query, limit=limit, year_range=year or None)
 
-    if not results:
-        console.print("[yellow]No results found.[/yellow]")
-        raise typer.Exit(0)
+        if not results:
+            console.print("[yellow]No results found.[/yellow]")
+            raise typer.Exit(0)
 
-    # Display results in a table
-    table = Table(title=f"Search Results ({len(results)})")
-    table.add_column("#", style="dim", width=3)
-    table.add_column("Year", width=5)
-    table.add_column("Title", max_width=60)
-    table.add_column("Authors", max_width=30)
-    table.add_column("DOI", max_width=25)
-    table.add_column("Cites", width=5, justify="right")
+        table = Table(title=f"Semantic Scholar Results ({len(results)})")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Year", width=5)
+        table.add_column("Title", max_width=60)
+        table.add_column("Authors", max_width=30)
+        table.add_column("DOI", max_width=25)
+        table.add_column("Cites", width=5, justify="right")
 
-    for i, r in enumerate(results, 1):
-        authors_str = ", ".join(r.authors[:3])
-        if len(r.authors) > 3:
-            authors_str += " et al."
-        table.add_row(
-            str(i),
-            str(r.year or ""),
-            r.title[:60],
-            authors_str[:30],
-            r.doi[:25] if r.doi else r.arxiv_id[:25] if r.arxiv_id else "",
-            str(r.citation_count),
-        )
+        for i, r in enumerate(results, 1):
+            authors_str = ", ".join(r.authors[:3])
+            if len(r.authors) > 3:
+                authors_str += " et al."
+            table.add_row(
+                str(i),
+                str(r.year or ""),
+                r.title[:60],
+                authors_str[:30],
+                r.doi[:25] if r.doi else r.arxiv_id[:25] if r.arxiv_id else "",
+                str(r.citation_count),
+            )
 
-    console.print(table)
+        console.print(table)
 
-    # Optionally fetch full texts
-    if do_fetch:
-        fetchable = [r for r in results if r.doi or r.arxiv_id]
-        if fetchable:
-            console.print(f"\n[bold]Fetching {len(fetchable)} papers...[/bold]")
-            config = Config.load()
-            fetcher = PaperFetcher(config)
-            try:
-                for r in fetchable:
-                    identifier = r.doi or f"arxiv:{r.arxiv_id}"
-                    console.print(f"  Fetching: {identifier}")
-                    try:
-                        paper = fetcher.fetch(identifier)
-                        status = "[green]OK[/green]" if paper.full_text else "[yellow]No text[/yellow]"
-                        console.print(f"    {status}")
-                    except Exception as e:
-                        console.print(f"    [red]Error: {e}[/red]")
-            finally:
-                fetcher.close()
+        if do_fetch:
+            fetchable = [r for r in results if r.doi or r.arxiv_id]
+            if fetchable:
+                console.print(f"\n[bold]Fetching {len(fetchable)} papers...[/bold]")
+                config = Config.load()
+                fetcher = PaperFetcher(config)
+                try:
+                    for r in fetchable:
+                        identifier = r.doi or f"arxiv:{r.arxiv_id}"
+                        console.print(f"  Fetching: {identifier}")
+                        try:
+                            paper = fetcher.fetch(identifier)
+                            status = "[green]OK[/green]" if paper.full_text else "[yellow]No text[/yellow]"
+                            console.print(f"    {status}")
+                        except Exception as e:
+                            console.print(f"    [red]Error: {e}[/red]")
+                finally:
+                    fetcher.close()
 
 
 @app.command()
