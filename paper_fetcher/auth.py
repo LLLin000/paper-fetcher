@@ -133,9 +133,25 @@ class ProxyAuth:
             logger.info("Trying Edge browser...")
 
             try:
-                # Fallback to Edge
                 browser_type = "edge"
+                from selenium.webdriver.edge.service import Service as EdgeService
+                
+                edge_paths = [
+                    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                ]
+                
+                edge_binary = None
+                for path in edge_paths:
+                    if Path(path).exists():
+                        edge_binary = path
+                        break
+                
+                if edge_binary is None:
+                    raise FileNotFoundError("Edge browser not found in standard locations")
+                
                 options = EdgeOptions()
+                options.binary_location = edge_binary
                 options.add_argument("--no-first-run")
                 options.add_argument("--no-default-browser-check")
                 options.add_argument("--remote-allow-origins=*")
