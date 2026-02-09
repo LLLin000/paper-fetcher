@@ -76,7 +76,8 @@ class PaperFetcher:
         if doi and doi.startswith("10.1016/") and self.config.elsevier_api_key:
             logger.info("Trying Elsevier API for %s...", doi)
             elsevier_paper = self._try_elsevier_api(doi, paper)
-            if elsevier_paper and elsevier_paper.full_text:
+            # Only accept if we got substantial full text (>3000 chars, not just abstract)
+            if elsevier_paper and elsevier_paper.full_text and len(elsevier_paper.full_text) > 3000:
                 self._save_cache(elsevier_paper)
                 return elsevier_paper
             if elsevier_paper:
@@ -189,7 +190,13 @@ class PaperFetcher:
         if not self.config.elsevier_api_key:
             return None
         
-        client = ElsevierClient(self.config.elsevier_api_key)
+        # Use authenticated VPN session for subscription access
+        proxy_auth = None
+        if self.config.proxy_base:
+            self.auth.login()
+            proxy_auth = self.auth
+        
+        client = ElsevierClient(self.config.elsevier_api_key, proxy_auth=proxy_auth)
         article = client.get_article_by_doi(doi)
         
         if not article:

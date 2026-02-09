@@ -31,12 +31,25 @@ class ElsevierArticle:
 class ElsevierClient:
     """Client for Elsevier APIs (ScienceDirect, Scopus)."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, proxy_auth=None):
         self.api_key = api_key
+        self.proxy_auth = proxy_auth
+        self.session = proxy_auth.session if proxy_auth else requests.Session()
         self.headers = {
             "X-ELS-APIKey": api_key,
             "Accept": "application/json",
         }
+    
+    def _fetch(self, url: str, headers: dict, params: dict = None) -> "requests.Response":
+        if self.proxy_auth:
+            kwargs = {"headers": headers, "timeout": 30}
+            if params:
+                kwargs["params"] = params
+            return self.proxy_auth.fetch(url, **kwargs)
+        kwargs = {"headers": headers, "timeout": 30}
+        if params:
+            kwargs["params"] = params
+        return self.session.get(url, **kwargs)
     
     def get_article_by_doi(self, doi: str) -> Optional[ElsevierArticle]:
         """Fetch article metadata and full text by DOI.
@@ -50,7 +63,8 @@ class ElsevierClient:
         url = f"{ELSEVIER_API_BASE}/content/article/doi/{doi}"
         
         try:
-            resp = requests.get(url, headers=self.headers, timeout=30)
+            # First get metadata via JSON
+            resp = self._fetch(url, self.headers)
             
             if resp.status_code == 404:
                 logger.warning("Article not found: %s", doi)
@@ -62,8 +76,19 @@ class ElsevierClient:
             
             resp.raise_for_status()
             data = resp.json()
+            article = self._parse_metadata(data)
             
-            return self._parse_article(data)
+            # Now try to get full text via XML
+            xml_headers = {**self.headers, "Accept": "text/xml"}
+            xml_resp = self._fetch(url, xml_headers)
+            
+            if xml_resp.status_code == 200:
+                full_text = self._extract_full_text_xml(xml_resp.text)
+                if full_text:
+                    article.full_text = full_text
+                    logger.info("Extracted %d chars of full text from XML", len(full_text))
+            
+            return article
             
         except requests.RequestException as e:
             logger.error("Failed to fetch article %s: %s", doi, e)
@@ -82,7 +107,7 @@ class ElsevierClient:
         headers = {**self.headers, "Accept": "text/xml"}
         
         try:
-            resp = requests.get(url, headers=headers, timeout=30)
+            resp = self._fetch(url, headers)
             
             if resp.status_code == 404:
                 logger.warning("Full text not found for PII: %s", pii)
@@ -118,7 +143,7 @@ class ElsevierClient:
         }
         
         try:
-            resp = requests.get(url, headers=self.headers, params=params, timeout=30)
+            resp = self._fetch(url, self.headers, params)
             resp.raise_for_status()
             data = resp.json()
             
@@ -135,8 +160,7 @@ class ElsevierClient:
             logger.error("Search failed: %s", e)
             return []
     
-    def _parse_article(self, data: dict) -> ElsevierArticle:
-        """Parse article data from API response."""
+    def _parse_metadata(self, data: dict) -> ElsevierArticle:
         article = ElsevierArticle()
         
         # Navigate the full-text-links structure
@@ -163,10 +187,8 @@ class ElsevierClient:
         # Abstract
         article.abstract = ftl.get("coredata", {}).get("dc:description", "")
         
-        # Full text (if available)
-        original_text = ftl.get("originalText", {})
-        if original_text:
-            article.full_text = original_text.get("$", "")
+        # Full text will be fetched separately via XML endpoint
+        # originalText in JSON is just indexing data, not real content
         
         return article
     

@@ -49,6 +49,7 @@ class ProxyAuth:
     def session(self) -> requests.Session:
         if self._session is None:
             self._session = requests.Session()
+            self._session.trust_env = False  # Bypass system proxy (Clash, V2Ray, etc.)
             self._session.headers.update({
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -295,7 +296,7 @@ class ProxyAuth:
         if self._proxy_type in url.lower():
             return url
 
-        # SSL VPN: just return original URL (VPN routes at network level)
+        # SSL VPN Portal: transparent routing at network level
         if self._proxy_type == "ssl_vpn":
             return url
 

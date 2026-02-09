@@ -110,6 +110,29 @@ def fetch(
 
         if paper.pdf_path:
             console.print(f"\n[dim]PDF saved to: {paper.pdf_path}[/dim]")
+
+        if paper.full_text and output:
+            results_dir = Path(config.output_dir)
+            results_dir.mkdir(parents=True, exist_ok=True)
+            
+            if paper.doi:
+                safe_name = paper.doi.replace("/", "_").replace(":", "_")
+            elif identifier.isdigit():
+                safe_name = f"PMID_{identifier}"
+            else:
+                safe_name = identifier.replace("/", "_").replace(":", "_")
+            
+            if format == "markdown":
+                out_file = results_dir / f"{safe_name}.md"
+                out_file.write_text(paper.to_markdown(), encoding="utf-8")
+            elif format == "text":
+                out_file = results_dir / f"{safe_name}.txt"
+                out_file.write_text(paper.to_text(), encoding="utf-8")
+            else:
+                out_file = results_dir / f"{safe_name}.json"
+                out_file.write_text(paper.to_json(), encoding="utf-8")
+            console.print(f"[dim]Saved to: {out_file}[/dim]")
+        
         console.print(f"[dim]Source: {paper.source}[/dim]")
 
     finally:
