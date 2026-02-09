@@ -13,6 +13,31 @@ def can_handle(url: str) -> bool:
     )
 
 
+def _find_pdf_url(html: str, url: str) -> str | None:
+    """Find PDF download URL from Elsevier page."""
+    soup = BeautifulSoup(html, "lxml")
+    
+    # Check for direct PDF link
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/pdf" in href.lower() or href.endswith(".pdf"):
+            if href.startswith("/"):
+                from urllib.parse import urlparse
+                base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+                return base + href
+            return href
+    
+    # ScienceDirect PDF URL pattern
+    import re
+    pii_match = re.search(r"/pii/(S?\d+X?\d+)", url)
+    if pii_match:
+        pii = pii_match.group(1)
+        base_url = "https://www.sciencedirect.com"
+        return f"{base_url}/science/article/pii/{pii}/pdfft"
+    
+    return None
+
+
 def extract(html: str, url: str = "") -> dict:
     """Extract paper content from Elsevier/ScienceDirect HTML."""
     soup = BeautifulSoup(html, "lxml")
@@ -20,7 +45,7 @@ def extract(html: str, url: str = "") -> dict:
     for tag in soup.find_all(["script", "style", "nav"]):
         tag.decompose()
 
-    return {
+    result = {
         "title": _extract_title(soup),
         "authors": _extract_authors(soup),
         "abstract": _extract_abstract(soup),
@@ -28,6 +53,13 @@ def extract(html: str, url: str = "") -> dict:
         "figures": _extract_figures(soup),
         "references": _extract_references(soup),
     }
+    
+    # Add PDF URL hint
+    pdf_url = _find_pdf_url(html, url)
+    if pdf_url:
+        result["pdf_url"] = pdf_url
+
+    return result
 
 
 def _extract_title(soup: BeautifulSoup) -> str:

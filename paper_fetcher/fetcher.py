@@ -203,8 +203,13 @@ class PaperFetcher:
         extracted = html_extractor.extract(resp.text, resp.url)
         self._apply_extracted(paper, extracted)
 
-        # Always try to find and download PDF for local storage
-        pdf_url = self._find_pdf_link(resp.text, resp.url)
+        # Try PDF URL from extractor first
+        pdf_url = extracted.get("pdf_url")
+        
+        # Fallback: find PDF link in HTML
+        if not pdf_url:
+            pdf_url = self._find_pdf_link(resp.text, resp.url)
+        
         if pdf_url:
             logger.info("Found PDF link, downloading: %s", pdf_url)
             self._rate_limit()
