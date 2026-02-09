@@ -16,7 +16,7 @@ from .config import Config
 from .extractors import html_extractor, pdf_extractor
 from .models import Paper
 from .sources import arxiv, unpaywall
-from .sources.pubmed import pmid_to_doi
+from .sources.pubmed import pmid_to_doi, get_article_from_pmid
 from .sources.doi_resolver import resolve_doi_to_url
 
 logger = logging.getLogger(__name__)
@@ -319,7 +319,9 @@ class PaperFetcher:
 
     def _resolve_doi(self, doi: str) -> str | None:
         """Resolve a DOI to its target URL (publisher website)."""
-        return resolve_doi_to_url(doi)
+        # For WebVPN, just use doi.org URL directly
+        # WebVPN will handle the redirect to the correct publisher
+        return f"https://doi.org/{doi}"
 
     def _rate_limit(self):
         """Apply rate limiting between requests."""

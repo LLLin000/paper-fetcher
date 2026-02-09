@@ -27,6 +27,24 @@ class PMCIDResult:
     is_oa: bool = False
 
 
+@dataclass
+class PubMedArticle:
+    """Full PubMed article metadata."""
+    pmid: str = ""
+    doi: str = ""
+    title: str = ""
+    authors: list = None
+    journal: str = ""
+    year: int = None
+    abstract: str = ""
+    publisher_url: str = ""
+    is_oa: bool = False
+    
+    def __post_init__(self):
+        if self.authors is None:
+            self.authors = []
+
+
 def pmid_to_doi(pmid: str, email: str = "paper-fetcher@example.com") -> str | None:
     """Convert a PubMed ID (PMID) to a DOI using NCBI E-utilities.
 
@@ -150,6 +168,75 @@ def fetch_pmc_full_text_xml(pmcid: str) -> str | None:
         return None
     except requests.RequestException as e:
         logger.error("Failed to fetch PMC full text for %s: %s", pmcid, e)
+        return None
+
+
+def get_article_from_pmid(pmid: str) -> PubMedArticle | None:
+    """Fetch complete article info from PubMed including publisher URL.
+    
+    Args:
+        pmid: PubMed ID
+        
+    Returns:
+        PubMedArticle with metadata including publisher URL
+    """
+    article = PubMedArticle(pmid=pmid)
+    
+    try:
+        # Fetch from PubMed
+        params = {
+            "db": "pubmed",
+            "id": pmid.strip(),
+            "retmode": "xml",
+            "rettype": "abstract",
+        }
+        
+        resp = requests.get(EFETCH_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        
+        xml_text = resp.text
+        
+        # Extract DOI
+        doi_match = re.search(r'<ArticleId IdType="doi">([^<]+)</ArticleId>', xml_text)
+        if doi_match:
+            article.doi = doi_match.group(1).strip()
+        
+        # Extract title
+        title_match = re.search(r'<ArticleTitle>([^<]+)</ArticleTitle>', xml_text)
+        if title_match:
+            article.title = title_match.group(1).strip()
+        
+        # Extract journal
+        journal_match = re.search(r'<Title>([^<]+)</Title>', xml_text)
+        if journal_match:
+            article.journal = journal_match.group(1).strip()
+        
+        # Extract year
+        year_match = re.search(r'<Year>(\d{4})</Year>', xml_text)
+        if year_match:
+            article.year = int(year_match.group(1))
+        
+        # Extract abstract
+        abstract_match = re.search(r'<AbstractText[^>]*>([^<]+)</AbstractText>', xml_text)
+        if abstract_match:
+            article.abstract = abstract_match.group(1).strip()
+        
+        # Extract authors
+        authors = re.findall(r'<LastName>([^<]+)</LastName>[^<]*<ForeName>([^<]+)</ForeName>', xml_text)
+        for last, first in authors:
+            article.authors.append(f"{last} {first}")
+        
+        # Look for publisher URL in comments/corrections
+        # PubMed often has the official URL in CommentsCorrections or similar
+        url_match = re.search(r'<CommentsCorrections.*RefType="CommentOn".*<RefSource>.*?Available from:\s*([^<\s]+)', xml_text, re.DOTALL)
+        if url_match:
+            article.publisher_url = url_match.group(1).strip()
+        
+        logger.info("Fetched PubMed article %s: %s", pmid, article.title[:50] if article.title else "No title")
+        return article
+        
+    except Exception as e:
+        logger.error("Failed to fetch PubMed article %s: %s", pmid, e)
         return None
 
 
