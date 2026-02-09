@@ -139,6 +139,7 @@ class ProxyAuth:
                 edge_paths = [
                     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                    r"D:\programs\edgedriver_win64\msedge.exe",
                 ]
                 
                 edge_binary = None
@@ -162,6 +163,7 @@ class ProxyAuth:
                     "msedgedriver",
                     r"C:\Windows\System32\msedgedriver.exe",
                     r"C:\Windows\msedgedriver.exe",
+                    r"D:\programs\edgedriver_win64\msedgedriver.exe",
                 ]
                 
                 driver_path = None
