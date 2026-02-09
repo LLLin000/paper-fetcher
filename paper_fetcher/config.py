@@ -15,7 +15,8 @@ class Config:
     """Paper fetcher configuration."""
 
     proxy_base: str = ""
-    email: str = ""  # Set via 'paper-fetcher config-cmd --email your@email.com'
+    email: str = ""
+    elsevier_api_key: str = ""
     output_dir: str = ""
     cache_dir: str = ""
     cookie_path: str = ""

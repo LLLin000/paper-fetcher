@@ -18,6 +18,7 @@ from .models import Paper
 from .sources import arxiv, unpaywall
 from .sources.pubmed import pmid_to_doi, get_article_from_pmid
 from .sources.doi_resolver import resolve_doi_to_url
+from .sources.elsevier_api import ElsevierClient
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,16 @@ class PaperFetcher:
             # Even if OA didn't get full text, preserve metadata
             if oa_paper:
                 paper = oa_paper
+
+        # Step 1.5: Try Elsevier API if DOI starts with 10.1016 (Elsevier prefix)
+        if doi and doi.startswith("10.1016/") and self.config.elsevier_api_key:
+            logger.info("Trying Elsevier API for %s...", doi)
+            elsevier_paper = self._try_elsevier_api(doi, paper)
+            if elsevier_paper and elsevier_paper.full_text:
+                self._save_cache(elsevier_paper)
+                return elsevier_paper
+            if elsevier_paper:
+                paper = elsevier_paper
 
         # Step 2: Resolve DOI to URL if needed
         if doi and not url:
@@ -171,6 +182,32 @@ class PaperFetcher:
             paper.full_text = pdf_extractor.extract_text(pdf_path)
             paper.figures = pdf_extractor.extract_figures(pdf_path)
 
+        return paper
+
+    def _try_elsevier_api(self, doi: str, paper: Paper) -> Paper | None:
+        """Try to fetch paper from Elsevier API."""
+        if not self.config.elsevier_api_key:
+            return None
+        
+        client = ElsevierClient(self.config.elsevier_api_key)
+        article = client.get_article_by_doi(doi)
+        
+        if not article:
+            return None
+        
+        paper.title = paper.title or article.title
+        paper.authors = paper.authors or article.authors
+        paper.journal = paper.journal or article.journal
+        paper.year = paper.year or article.year
+        paper.abstract = paper.abstract or article.abstract
+        paper.full_text = article.full_text
+        paper.source = "elsevier_api"
+        
+        if article.full_text:
+            logger.info("Got full text from Elsevier API for %s", doi)
+            return paper
+        
+        logger.info("Elsevier API returned metadata but no full text for %s", doi)
         return paper
 
     def _fetch_via_ezproxy(self, url: str, paper: Paper) -> Paper:

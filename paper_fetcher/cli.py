@@ -393,7 +393,8 @@ def config_cmd(
     show: bool = typer.Option(True, "--show", help="Show current config."),
     set_email: str = typer.Option("", "--email", help="Set email for Unpaywall API."),
     set_output: str = typer.Option("", "--output-dir", help="Set default output directory."),
-    set_proxy: str = typer.Option("", "--proxy", help="Set university proxy URL (e.g., https://webvpn.sdu.edu.cn/)."),
+    set_proxy: str = typer.Option("", "--proxy", help="Set university proxy URL (e.g., https://vpn.sdu.edu.cn/portal/)."),
+    set_elsevier_key: str = typer.Option("", "--elsevier-key", help="Set Elsevier API key for direct full text access."),
 ):
     """View or update configuration."""
     cfg = Config.load()
@@ -413,17 +414,26 @@ def config_cmd(
         cfg.save()
         console.print(f"[green]Proxy set to: {set_proxy}[/green]")
 
-    if show and not set_email and not set_output and not set_proxy:
+    if set_elsevier_key:
+        cfg.elsevier_api_key = set_elsevier_key
+        cfg.save()
+        console.print(f"[green]Elsevier API key set.[/green]")
+
+    if show and not set_email and not set_output and not set_proxy and not set_elsevier_key:
         console.print("[bold]Current configuration:[/bold]")
-        console.print(f"  Proxy base:  {cfg.proxy_base or '(not set)'}")
-        console.print(f"  Email:       {cfg.email}")
-        console.print(f"  Output dir:  {cfg.output_dir}")
-        console.print(f"  Cache dir:   {cfg.cache_dir}")
-        console.print(f"  Cookie path: {cfg.cookie_path}")
+        console.print(f"  Proxy base:       {cfg.proxy_base or '(not set)'}")
+        console.print(f"  Email:            {cfg.email}")
+        console.print(f"  Elsevier API Key: {'(set)' if cfg.elsevier_api_key else '(not set)'}")
+        console.print(f"  Output dir:       {cfg.output_dir}")
+        console.print(f"  Cache dir:        {cfg.cache_dir}")
+        
+        if not cfg.elsevier_api_key:
+            console.print("\n[cyan]Tip: Set Elsevier API key for direct full text access (no CAPTCHA):[/cyan]")
+            console.print("  paper-fetcher config-cmd --elsevier-key YOUR_API_KEY")
         
         if not cfg.proxy_base:
-            console.print("\n[yellow]Note: No proxy configured. Set your university proxy to access paywalled papers.[/yellow]")
-            console.print("  Example: paper-fetcher config-cmd --proxy https://webvpn.sdu.edu.cn/")
+            console.print("\n[yellow]Note: No proxy configured. Set your university proxy for non-OA papers:[/yellow]")
+            console.print("  Example: paper-fetcher config-cmd --proxy https://vpn.sdu.edu.cn/portal/")
 
 
 if __name__ == "__main__":
