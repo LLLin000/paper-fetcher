@@ -36,12 +36,12 @@ class ProxyAuth:
         """Detect proxy type from URL pattern."""
         proxy_base = self.config.proxy_base.lower()
 
-        if "webvpn" in proxy_base:
+        if "/portal" in proxy_base or "vpn." in proxy_base:
+            return "ssl_vpn"
+        elif "webvpn" in proxy_base:
             return "webvpn"
         elif "ezproxy" in proxy_base or "eproxy" in proxy_base:
             return "ezproxy"
-        elif "vpn" in proxy_base:
-            return "vpn"
         else:
             return "generic"
 
@@ -242,6 +242,10 @@ class ProxyAuth:
         """Check if URL indicates successful login."""
         url_lower = url.lower()
 
+        # SSL VPN: check if not on login page anymore
+        if self._proxy_type == "ssl_vpn":
+            return "login" not in url_lower and "portal" not in url_lower
+
         # WebVPN: URL contains webvpn domain and not login
         if self._proxy_type == "webvpn":
             return "webvpn" in url_lower and "login" not in url_lower
@@ -289,6 +293,10 @@ class ProxyAuth:
 
         # Already proxied
         if self._proxy_type in url.lower():
+            return url
+
+        # SSL VPN: just return original URL (VPN routes at network level)
+        if self._proxy_type == "ssl_vpn":
             return url
 
         # WebVPN format: https://webvpn.xxx.edu.cn/https://target.url
