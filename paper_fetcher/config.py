@@ -14,7 +14,7 @@ DEFAULT_BASE_DIR = Path.home() / ".paper-fetcher"
 class Config:
     """Paper fetcher configuration."""
 
-    proxy_base: str = "http://eproxy.lib.hku.hk/login?url="
+    proxy_base: str = ""
     email: str = ""  # Set via 'paper-fetcher config-cmd --email your@email.com'
     output_dir: str = ""
     cache_dir: str = ""

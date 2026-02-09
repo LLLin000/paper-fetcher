@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "paper-fetcher"
 version = "0.1.0"
-description = "Automated academic paper full-text fetcher with HKU EZproxy support"
+description = "Unified academic paper fetcher with PubMed, Google Scholar, and Semantic Scholar support"
 requires-python = ">=3.10"
 dependencies = [
     "typer>=0.9.0",
@@ -17,6 +17,7 @@ dependencies = [
     "webdriver-manager>=4.0.0",
     "pymupdf>=1.23.0",
     "mcp[cli]>=1.0.0",
+    "scholarly>=1.7.0",
 ]
 
 [project.scripts]
